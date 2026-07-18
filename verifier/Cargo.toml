@@ -14,6 +14,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
 anyhow = "1.0"
+reqwest = { version = "0.12", features = ["json"] }
+url = "2"
+thiserror = "1.0"
+chrono = "0.4"
 
 [[bin]]
 name = "verifier"

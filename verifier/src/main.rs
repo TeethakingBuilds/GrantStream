@@ -12,6 +12,7 @@ use tracing;
 
 mod verifier;
 mod db;
+mod github;
 
 #[derive(Clone)]
 struct AppState {
