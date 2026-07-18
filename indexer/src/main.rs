@@ -61,6 +61,8 @@ async fn main() -> Result<()> {
     let contract_address: Address = config.contract_address.parse()?;
     let contract = GrantStreamEscrow::new(contract_address, Arc::new(provider));
 
+    backfill_historical_events(&contract, &db_pool, &job_tx, &config).await?;
+
     let event_filter = contract.events::<MilestoneSubmittedFilter>();
     let mut stream = event_filter.stream().await?;
     tracing::info!("Listening for MilestoneSubmitted events...");
@@ -106,19 +108,124 @@ async fn submit_verification(
     Ok(())
 }
 
+async fn backfill_historical_events(
+    contract: &GrantStreamEscrow<Provider<Ws>>,
+    db_pool: &SqlitePool,
+    job_tx: &mpsc::Sender<VerificationJob>,
+    config: &Config,
+) -> Result<()> {
+    let Some(deployment_block) = config.deployment_block else {
+        tracing::info!("DEPLOYMENT_BLOCK not set — skipping historical backfill");
+        return Ok(());
+    };
+
+    let current_block = contract.client().get_block_number().await?.as_u64();
+
+    let resume_from = match db::get_last_indexed_block(db_pool).await? {
+        Some(last) => last + 1,
+        None => deployment_block,
+    };
+
+    if resume_from > current_block {
+        tracing::info!(
+            "Indexer already caught up through block {current_block} — nothing to backfill"
+        );
+        return Ok(());
+    }
+
+    tracing::info!(
+        "Backfilling MilestoneSubmitted events from block {resume_from} to {current_block}"
+    );
+
+    let mut from = resume_from;
+    while from <= current_block {
+        let to = std::cmp::min(
+            from.saturating_add(config.backfill_chunk_size.saturating_sub(1)),
+            current_block,
+        );
+
+        let events = contract
+            .events::<MilestoneSubmittedFilter>()
+            .from_block(from)
+            .to_block(to)
+            .query()
+            .await
+            .with_context(|| format!("failed to query events for blocks {from}..={to}"))?;
+
+        let event_count = events.len();
+
+        for parsed in events {
+            let job = VerificationJob {
+                grant_id: parsed.grant_id.as_u64(),
+                milestone_id: parsed.milestone_id.as_u64(),
+                evidence_uri: parsed.evidence_uri,
+                submitted_at: chrono::Utc::now().naive_utc(),
+            };
+
+            tracing::info!(?job, "enqueuing backfilled verification job");
+
+            if let Err(e) = db::insert_pending_job(db_pool, &job).await {
+                tracing::error!(?e, "failed to insert backfilled pending job");
+                continue;
+            }
+
+            if let Err(e) = job_tx.send(job).await {
+                tracing::error!(?e, "job channel send failed during backfill");
+            }
+        }
+
+        // Persist progress after each chunk (not just at the end) so a
+        // crash/restart mid-backfill resumes from the last *completed*
+        // chunk instead of re-scanning the whole range from scratch.
+        db::set_last_indexed_block(db_pool, to).await?;
+        tracing::info!("Backfilled blocks {from}..={to} ({event_count} events)");
+
+        from = to + 1;
+    }
+
+    tracing::info!("Backfill complete, caught up to block {current_block}");
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub rpc_url: String,
     pub contract_address: String,
     pub database_url: String,
+    /// Block the contract was deployed at. If set, the indexer backfills
+    /// all `MilestoneSubmitted` events from here (or from the last
+    /// indexed block on restart) up to the current chain head before
+    /// switching to the live subscription. If unset, backfill is
+    /// skipped entirely — matches the old behavior for anyone not ready
+    /// to opt in yet.
+    pub deployment_block: Option<u64>,
+    /// Max block range per `eth_getLogs` call during backfill. Most RPC
+    /// providers cap this (commonly 2000-10000); keep it conservative by
+    /// default since a too-large range just gets rejected by the node.
+    pub backfill_chunk_size: u64,
 }
 
 impl Config {
     pub fn from_env() -> Result<Self> {
+        let deployment_block = match std::env::var("DEPLOYMENT_BLOCK") {
+            Ok(v) => Some(
+                v.parse::<u64>()
+                    .context("DEPLOYMENT_BLOCK must be a valid block number")?,
+            ),
+            Err(_) => None,
+        };
+
+        let backfill_chunk_size = std::env::var("BACKFILL_CHUNK_SIZE")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(2000);
+
         Ok(Self {
             rpc_url: std::env::var("RPC_URL")?,
             contract_address: std::env::var("CONTRACT_ADDRESS")?,
             database_url: std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:indexer.db".into()),
+            deployment_block,
+            backfill_chunk_size,
         })
     }
 }

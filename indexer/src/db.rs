@@ -7,6 +7,35 @@ pub async fn init_pool(database_url: &str) -> Result<SqlitePool> {
     Ok(pool)
 }
 
+/// Returns the last block the indexer confirmed it fully processed, or
+/// `None` if this is a fresh DB (never backfilled or indexed anything yet).
+pub async fn get_last_indexed_block(pool: &SqlitePool) -> Result<Option<u64>> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT last_indexed_block FROM indexer_state WHERE id = 1")
+            .fetch_optional(pool)
+            .await?;
+
+    Ok(row.map(|(b,)| b as u64))
+}
+
+/// Records `block` as the last block fully processed. Called after each
+/// backfill chunk completes so a restart mid-backfill resumes from here
+/// rather than re-scanning from the deployment block.
+pub async fn set_last_indexed_block(pool: &SqlitePool, block: u64) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO indexer_state (id, last_indexed_block)
+        VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET last_indexed_block = excluded.last_indexed_block
+        "#,
+    )
+    .bind(block as i64)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn insert_pending_job(pool: &SqlitePool, job: &VerificationJob) -> Result<()> {
     sqlx::query(
         r#"
