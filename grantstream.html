@@ -45,7 +45,7 @@
 
   /* NAV */
   nav {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    position: fixed; top: 0; left: 0; right: 0; z-index: 160;
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 2rem; height: 60px;
     background: rgba(10,15,10,0.92);
@@ -81,6 +81,83 @@
   .nav-links a:hover, .nav-links a.active { color: var(--green); }
 
   .nav-right { display: flex; align-items: center; gap: 12px; }
+
+  /* MOBILE NAV */
+  .nav-hamburger {
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    width: 32px; height: 32px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    margin-left: 8px;
+  }
+
+  .nav-hamburger .hamburger-line {
+    width: 100%; height: 2px;
+    background: var(--text);
+    border-radius: 2px;
+    transition: transform 0.25s ease, opacity 0.25s ease;
+  }
+
+  .nav-hamburger.open .hamburger-line:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+  .nav-hamburger.open .hamburger-line:nth-child(2) { opacity: 0; }
+  .nav-hamburger.open .hamburger-line:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+  .mobile-nav-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 150;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+
+  .mobile-nav-overlay.open { display: block; opacity: 1; }
+
+  .mobile-nav-drawer {
+    position: fixed; top: 0; right: 0;
+    width: 260px; max-width: 78vw; height: 100vh;
+    background: var(--bg2);
+    border-left: 1px solid var(--border);
+    z-index: 151;
+    padding: 80px 1.5rem 2rem;
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    display: flex; flex-direction: column; gap: 1.5rem;
+    overflow-y: auto;
+  }
+
+  .mobile-nav-drawer.open { transform: translateX(0); }
+
+  .mobile-nav-links {
+    list-style: none;
+    display: flex; flex-direction: column; gap: 0.25rem;
+  }
+
+  .mobile-nav-links a {
+    display: block;
+    color: var(--text2); text-decoration: none;
+    font-size: 1rem; font-weight: 500;
+    padding: 12px 8px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: color 0.2s, background 0.2s;
+  }
+
+  .mobile-nav-links a:hover, .mobile-nav-links a.active {
+    color: var(--green);
+    background: var(--green-glow);
+  }
+
+  .mobile-nav-actions {
+    display: flex; flex-direction: column; gap: 10px;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
 
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
@@ -867,6 +944,7 @@
     .hero h1 { font-size: 2rem; }
     nav { padding: 0 1rem; }
     .nav-links { display: none; }
+    .nav-hamburger { display: flex; }
   }
 
   /* Flow diagram */
@@ -1138,8 +1216,29 @@
     </div>
     <button class="btn btn-ghost btn-sm" id="connect-btn" onclick="openWalletModal()">Connect Wallet</button>
     <button class="btn btn-primary btn-sm" id="create-grant-btn" onclick="openCreateGrantModal()">Create Grant</button>
+    <button class="nav-hamburger" id="nav-hamburger" onclick="toggleMobileNav()" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-nav-drawer">
+      <span class="hamburger-line"></span>
+      <span class="hamburger-line"></span>
+      <span class="hamburger-line"></span>
+    </button>
   </div>
 </nav>
+
+<!-- MOBILE NAV DRAWER -->
+<div class="mobile-nav-overlay" id="mobile-nav-overlay" onclick="closeMobileNav()"></div>
+<div class="mobile-nav-drawer" id="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="Mobile navigation">
+  <ul class="mobile-nav-links">
+    <li><a onclick="handleMobileNavClick('landing')" id="mnav-landing" class="active">Home</a></li>
+    <li><a onclick="handleMobileNavClick('dashboard')" id="mnav-dashboard">Dashboard</a></li>
+    <li><a onclick="handleMobileNavClick('verifier')" id="mnav-verifier">Verify</a></li>
+    <li><a onclick="handleMobileNavClick('leaderboard')" id="mnav-leaderboard">Leaderboard</a></li>
+    <li><a onclick="handleMobileNavClick('docs')" id="mnav-docs">Docs</a></li>
+  </ul>
+  <div class="mobile-nav-actions">
+    <button class="btn btn-ghost btn-sm" onclick="closeMobileNav(); openWalletModal();">Connect Wallet</button>
+    <button class="btn btn-primary btn-sm" onclick="closeMobileNav(); openCreateGrantModal();">Create Grant</button>
+  </div>
+</div>
 
 <!-- ===== LANDING PAGE ===== -->
 <div class="page active" id="page-landing">
@@ -2910,9 +3009,12 @@ function toast(msg, type = 'success') {
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-links a').forEach(a => a.classList.remove('active'));
+  document.querySelectorAll('.mobile-nav-links a').forEach(a => a.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
   const navEl = document.getElementById('nav-' + name);
   if (navEl) navEl.classList.add('active');
+  const mnavEl = document.getElementById('mnav-' + name);
+  if (mnavEl) mnavEl.classList.add('active');
 
   if (name === 'dashboard') {
     renderGrants('grants-list', grants);
@@ -2922,6 +3024,44 @@ function showPage(name) {
   if (name === 'verifier')    renderVerifier();
   if (name === 'leaderboard') renderLeaderboard();
 }
+
+function toggleMobileNav() {
+  const drawer = document.getElementById('mobile-nav-drawer');
+  if (drawer.classList.contains('open')) {
+    closeMobileNav();
+  } else {
+    openMobileNav();
+  }
+}
+
+function openMobileNav() {
+  document.getElementById('mobile-nav-drawer').classList.add('open');
+  document.getElementById('mobile-nav-overlay').classList.add('open');
+  document.getElementById('nav-hamburger').classList.add('open');
+  document.getElementById('nav-hamburger').setAttribute('aria-expanded', 'true');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeMobileNav() {
+  document.getElementById('mobile-nav-drawer').classList.remove('open');
+  document.getElementById('mobile-nav-overlay').classList.remove('open');
+  document.getElementById('nav-hamburger').classList.remove('open');
+  document.getElementById('nav-hamburger').setAttribute('aria-expanded', 'false');
+  document.body.style.overflow = '';
+}
+
+function handleMobileNavClick(name) {
+  showPage(name);
+  closeMobileNav();
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeMobileNav();
+});
+
+window.addEventListener('resize', function() {
+  if (window.innerWidth > 768) closeMobileNav();
+});
 
 function switchTab(tab) {
   document.querySelectorAll('[id^="tab-"]').forEach(t => t.style.display = 'none');
