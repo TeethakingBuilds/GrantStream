@@ -656,6 +656,20 @@
 
   .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 
+  .form-input.error, .form-select.error, .form-textarea.error {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 2px rgba(239,68,68,0.12);
+  }
+
+  .field-error-msg {
+    display: none;
+    color: #ef4444;
+    font-size: 0.75rem;
+    margin-top: 6px;
+  }
+
+  .field-error-msg.show { display: block; }
+
   .milestone-inputs { display: flex; flex-direction: column; gap: 8px; }
 
   .milestone-input-row {
@@ -1678,22 +1692,26 @@
     <div class="form-group">
       <label class="form-label">Grant Title</label>
       <input class="form-input" type="text" placeholder="e.g. ETHGlobal Build Grant" id="grant-title">
+      <div class="field-error-msg" id="grant-title-error"></div>
     </div>
 
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Recipient Wallet</label>
         <input class="form-input" type="text" placeholder="0x..." id="grant-recipient">
+        <div class="field-error-msg" id="grant-recipient-error"></div>
       </div>
       <div class="form-group">
         <label class="form-label">Total Amount (USDC)</label>
         <input class="form-input" type="number" placeholder="5000" id="grant-amount">
+        <div class="field-error-msg" id="grant-amount-error"></div>
       </div>
     </div>
 
     <div class="form-group">
       <label class="form-label">Verifier Wallet</label>
       <input class="form-input" type="text" placeholder="0x..." id="grant-verifier">
+      <div class="field-error-msg" id="grant-verifier-error"></div>
     </div>
 
     <div class="form-group">
@@ -1713,7 +1731,7 @@
 
     <div style="display:flex; gap:10px; margin-top:1.5rem">
       <button class="btn btn-ghost" style="flex:1" onclick="closeModal('create-modal')">Cancel</button>
-      <button class="btn btn-primary" style="flex:2" id="create-grant-btn" onclick="submitGrant()">
+      <button class="btn btn-primary" style="flex:2" id="create-grant-submit-btn" onclick="submitGrant()">
         🔒 Lock Funds & Create Grant
       </button>
     </div>
@@ -2720,6 +2738,72 @@ function updateMilestoneInputs() {
     </div>`).join('');
 }
 
+const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
+const MAX_GRANT_AMOUNT = 10000000; // sanity ceiling, USDC
+
+function setFieldError(fieldId, message) {
+  const input = document.getElementById(fieldId);
+  const errEl = document.getElementById(fieldId + '-error');
+  if (input) input.classList.add('error');
+  if (errEl) { errEl.textContent = message; errEl.classList.add('show'); }
+}
+
+function clearFieldError(fieldId) {
+  const input = document.getElementById(fieldId);
+  const errEl = document.getElementById(fieldId + '-error');
+  if (input) input.classList.remove('error');
+  if (errEl) { errEl.textContent = ''; errEl.classList.remove('show'); }
+}
+
+function validateGrantForm() {
+  let isValid = true;
+  ['grant-title', 'grant-recipient', 'grant-amount', 'grant-verifier'].forEach(clearFieldError);
+
+  const title = document.getElementById('grant-title').value.trim();
+  if (!title) {
+    setFieldError('grant-title', 'Grant title is required.');
+    isValid = false;
+  }
+
+  const recipient = document.getElementById('grant-recipient').value.trim();
+  if (!recipient) {
+    setFieldError('grant-recipient', 'Recipient wallet is required.');
+    isValid = false;
+  } else if (!ETH_ADDRESS_REGEX.test(recipient)) {
+    setFieldError('grant-recipient', 'Enter a valid ETH address (0x followed by 40 hex characters).');
+    isValid = false;
+  }
+
+  const amountRaw = document.getElementById('grant-amount').value.trim();
+  const amount = Number(amountRaw);
+  if (!amountRaw) {
+    setFieldError('grant-amount', 'Total amount is required.');
+    isValid = false;
+  } else if (!Number.isFinite(amount) || amount <= 0) {
+    setFieldError('grant-amount', 'Amount must be a positive number.');
+    isValid = false;
+  } else if (amount > MAX_GRANT_AMOUNT) {
+    setFieldError('grant-amount', `Amount cannot exceed ${MAX_GRANT_AMOUNT.toLocaleString()} USDC.`);
+    isValid = false;
+  }
+
+  const verifier = document.getElementById('grant-verifier').value.trim();
+  if (!verifier) {
+    setFieldError('grant-verifier', 'Verifier wallet is required.');
+    isValid = false;
+  } else if (!ETH_ADDRESS_REGEX.test(verifier)) {
+    setFieldError('grant-verifier', 'Enter a valid ETH address (0x followed by 40 hex characters).');
+    isValid = false;
+  }
+
+  return isValid;
+}
+
+['grant-title', 'grant-recipient', 'grant-amount', 'grant-verifier'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', () => clearFieldError(id));
+});
+
 async function submitGrant() {
   if (!hasWalletConnection()) {
     toast('Connect your wallet before creating a grant.', 'error');
@@ -2728,14 +2812,19 @@ async function submitGrant() {
     return;
   }
 
-  const btn = document.getElementById('create-grant-btn');
+  if (!validateGrantForm()) {
+    toast('Please fix the highlighted fields before continuing.', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('create-grant-submit-btn');
   const idleHtml = '🔒 Lock Funds & Create Grant';
   setBtnLoading(btn, true, idleHtml);
 
-  const title     = document.getElementById('grant-title').value.trim() || 'New Grant';
-  const amount    = parseInt(document.getElementById('grant-amount').value) || 1000;
-  const recipient = document.getElementById('grant-recipient').value.trim() || '0xNew...Addr';
-  const verifier  = document.getElementById('grant-verifier').value.trim()  || '0xVer...ifier';
+  const title     = document.getElementById('grant-title').value.trim();
+  const amount    = Number(document.getElementById('grant-amount').value);
+  const recipient = document.getElementById('grant-recipient').value.trim();
+  const verifier  = document.getElementById('grant-verifier').value.trim();
 
   // Collect milestone amounts from inputs
   const milestoneRows = document.querySelectorAll('#milestone-inputs .milestone-input-row');
@@ -3025,6 +3114,7 @@ function openCreateGrantModal() {
   }
   openModal('create-modal');
   updateMilestoneInputs();
+  ['grant-title', 'grant-recipient', 'grant-amount', 'grant-verifier'].forEach(clearFieldError);
 }
 
 // ── Expose all interactive functions globally ──────────────────────────────
